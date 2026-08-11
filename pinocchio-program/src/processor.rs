@@ -53,6 +53,45 @@ mod tix {
     pub const HARVEST_TO_MINT: u8 = 4;
 }
 
+/// Extra accounts a Token-2022 TransferHook needs, forwarded verbatim.
+///
+/// A hook-gated mint — which is how every serious RWA enforces an allowlist —
+/// cannot be transferred at all unless the hook program and its
+/// `ExtraAccountMetaList` ride along with the CPI. Without this, wrapping such
+/// a token fails on the escrow deposit, which is precisely the class of token
+/// this program is for.
+///
+/// Bounded because `no_allocator!` forbids Vec. Ten covers the hook program,
+/// its meta list, and a realistic allowlist lookup; more than that and the
+/// caller should be splitting the work anyway.
+pub const MAX_HOOK_ACCOUNTS: usize = 10;
+
+/// Build a CPI account list of `fixed` metas plus however many hook accounts
+/// were passed, without allocating.
+fn with_hook_accounts<'a>(
+    fixed: &[InstructionAccount<'a>],
+    hooks: &'a [AccountView],
+    out: &mut [InstructionAccount<'a>; MAX_HOOK_ACCOUNTS + 4],
+) -> usize {
+    let mut n = 0;
+    for m in fixed {
+        out[n] = InstructionAccount {
+            address: m.address,
+            is_writable: m.is_writable,
+            is_signer: m.is_signer,
+        };
+        n += 1;
+    }
+    for h in hooks.iter().take(MAX_HOOK_ACCOUNTS) {
+        // Forwarded read-only and unsigned: a hook may inspect accounts, but
+        // nothing it is handed should gain write or signer authority it did
+        // not already have from the outer transaction.
+        out[n] = InstructionAccount::readonly(h.address());
+        n += 1;
+    }
+    n
+}
+
 fn need(accounts: &[AccountView], n: usize) -> Result<(), ProgramError> {
     if accounts.len() < n {
         return Err(WrapError::NotEnoughAccounts.into());
@@ -79,6 +118,9 @@ pub fn create_mint(_program_id: &Address, accounts: &[AccountView]) -> ProgramRe
 ///   4 `[]`         token program
 pub fn wrap(_program_id: &Address, accounts: &[AccountView], amount: u64, bump: u8) -> ProgramResult {
     need(accounts, 5)?;
+    // Anything past the fixed five is TransferHook baggage for the mint being
+    // wrapped, forwarded untouched.
+    let hook_accounts = &accounts[5..];
     let escrow = &accounts[0];
     let wrapped_mint = &accounts[1];
     let recipient = &accounts[2];
@@ -153,6 +195,7 @@ pub fn unwrap(
     bump: u8,
 ) -> ProgramResult {
     need(accounts, 8)?;
+    let hook_accounts = &accounts[8..];
     let escrow = &accounts[0];
     let wrapped_mint = &accounts[1];
     let holder = &accounts[2];
@@ -207,19 +250,35 @@ pub fn unwrap(
     tdata[0] = tix::TRANSFER_CHECKED;
     tdata[1..9].copy_from_slice(&assets_out.to_le_bytes());
     tdata[9] = decimals;
-    let tmetas = [
+    let tfixed = [
         InstructionAccount::writable(escrow.address()),
         InstructionAccount::readonly(unwrapped_mint.address()),
         InstructionAccount::writable(recipient.address()),
         InstructionAccount::readonly_signer(authority.address()),
     ];
-    invoke_signed(
+    let mut tbuf: [InstructionAccount; MAX_HOOK_ACCOUNTS + 4] =
+        core::array::from_fn(|_| InstructionAccount::readonly(escrow.address()));
+    let tn = with_hook_accounts(&tfixed, hook_accounts, &mut tbuf);
+
+    // The account VIEWS must mirror the metas one-for-one, or the runtime
+    // cannot resolve what the instruction refers to.
+    let mut tviews: [&AccountView; MAX_HOOK_ACCOUNTS + 4] =
+        core::array::from_fn(|_| escrow);
+    tviews[0] = escrow;
+    tviews[1] = unwrapped_mint;
+    tviews[2] = recipient;
+    tviews[3] = authority;
+    for (i, h) in hook_accounts.iter().take(MAX_HOOK_ACCOUNTS).enumerate() {
+        tviews[4 + i] = h;
+    }
+
+    pinocchio::cpi::invoke_signed_with_bounds::<{ MAX_HOOK_ACCOUNTS + 4 }, _>(
         &InstructionView {
             program_id: token_program.address(),
-            accounts: &tmetas,
+            accounts: &tbuf[..tn],
             data: &tdata,
         },
-        &[escrow, unwrapped_mint, recipient, authority],
+        &tviews[..tn],
         &signer,
     )
 }
@@ -296,7 +355,7 @@ pub fn crank_fees(_program_id: &Address, accounts: &[AccountView], bump: u8) -> 
             infos[i + 1] = a;
         }
 
-        pinocchio::cpi::invoke_signed_with_slice(
+        pinocchio::cpi::invoke_signed_with_bounds::<{ MAX_HOOK_ACCOUNTS + 4 }, _>(
             &InstructionView {
                 program_id: token_program.address(),
                 accounts: &metas[..n + 1],
