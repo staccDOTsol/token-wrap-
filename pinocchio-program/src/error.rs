@@ -26,6 +26,16 @@ pub enum WrapError {
     NotEnoughAccounts = 106,
     /// Unknown instruction discriminant.
     InvalidInstruction = 107,
+    /// Backpointer account is not owned by this program — its bytes are
+    /// whatever an unrelated program wrote, so they must not be trusted.
+    InvalidBackpointerOwner = 108,
+    /// The escrow handed to `init_backpointer` is not the authority-owned
+    /// reserves account for the mint pair being registered. Without this check
+    /// anyone could register an arbitrary mapping.
+    BackpointerEscrowMismatch = 109,
+    /// Backpointer already registered a DIFFERENT pair. Re-registering would
+    /// silently repoint an existing market.
+    BackpointerConflict = 110,
 }
 
 impl From<WrapError> for ProgramError {

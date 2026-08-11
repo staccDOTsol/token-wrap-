@@ -168,5 +168,82 @@ console.log(`\n  redeemed ${REDEEM} shares -> ${got} assets (expected ${expected
 must(got === expected, "unwrap pays exactly shares * reserves / supply");
 must(got > REDEEM, `NAV rose: ${got} assets for ${REDEEM} shares`);
 
+// ── 7. Backpointer: the on-chain registry ────────────────────────────────
+// Without this there is nothing to enumerate — the wrapped mint is a caller
+// Keypair, not a PDA of the underlying, so a client cannot derive a market and
+// has to replay history to find one. Registering makes the whole set readable
+// with a single getProgramAccounts on dataSize.
+const BACKPOINTER_SEED = Buffer.from("backpointer");
+const BACKPOINTER_LEN = 136;
+const [backpointer, bpBump] = PublicKey.findProgramAddressSync(
+  [BACKPOINTER_SEED, wrapped.publicKey.toBuffer()], PROGRAM,
+);
+console.log(`\n  backpointer     ${backpointer.toBase58()}  (bump ${bpBump})`);
+
+// Pre-fund the PDA. The program does Allocate+Assign signed by the PDA rather
+// than CreateAccount, so it never needs the rent sysvar or a lamport figure.
+const bpRent = await conn.getMinimumBalanceForRentExemption(BACKPOINTER_LEN);
+await sendAndConfirmTransaction(conn, new Transaction().add(
+  SystemProgram.transfer({ fromPubkey: payer.publicKey, toPubkey: backpointer, lamports: bpRent }),
+), [payer]);
+
+const ixInitBp = (bump) => new TransactionInstruction({
+  programId: PROGRAM,
+  keys: [
+    { pubkey: backpointer, isSigner: false, isWritable: true },
+    { pubkey: wrapped.publicKey, isSigner: false, isWritable: false },
+    { pubkey: escrow, isSigner: false, isWritable: false },
+    { pubkey: underlying.publicKey, isSigner: false, isWritable: false },
+    { pubkey: TOKEN_2022_PROGRAM_ID, isSigner: false, isWritable: false },
+    { pubkey: TOKEN_2022_PROGRAM_ID, isSigner: false, isWritable: false },
+    // The CPI target must be in the account list or the runtime cannot resolve
+    // it — "Unknown program 111…111" and a missing-account failure.
+    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+  ],
+  data: Buffer.concat([Buffer.from([4]), Buffer.from([bump])]),
+});
+
+try {
+  const sig = await sendAndConfirmTransaction(conn, new Transaction().add(ixInitBp(bpBump)), [payer]);
+  console.log(`  init_backpointer tx ${sig.slice(0, 24)}…`);
+} catch (e) {
+  console.log(`  init_backpointer FAILED: ${String(e.message).slice(0, 300)}`);
+  (e.logs ?? []).slice(-10).forEach((l) => console.log(`      ${l}`));
+  process.exit(1);
+}
+
+const bpInfo = await conn.getAccountInfo(backpointer, "confirmed");
+must(!!bpInfo, "backpointer account exists");
+must(bpInfo?.owner.equals(PROGRAM), "backpointer is owned by the program");
+must(bpInfo?.data.length === BACKPOINTER_LEN, `backpointer is ${BACKPOINTER_LEN} bytes`);
+if (bpInfo) {
+  const d = bpInfo.data;
+  const rdUnwrapped = new PublicKey(d.subarray(0, 32));
+  const rdEscrow = new PublicKey(d.subarray(32, 64));
+  const rdUnwrappedProg = new PublicKey(d.subarray(64, 96));
+  // Bytes 0..32 are byte-identical to upstream's Backpointer, so upstream
+  // readers keep working against records this program writes.
+  must(rdUnwrapped.equals(underlying.publicKey), "bytes 0..32 = unwrapped mint (upstream-compatible)");
+  must(rdEscrow.equals(escrow), "bytes 32..64 = escrow (reserves account)");
+  must(rdUnwrappedProg.equals(TOKEN_2022_PROGRAM_ID), "bytes 64..96 = unwrapped token program");
+}
+
+// Idempotent: a second caller racing to register the same pair must succeed,
+// not fail, or indexers fight each other.
+try {
+  await sendAndConfirmTransaction(conn, new Transaction().add(ixInitBp(bpBump)), [payer]);
+  ok(true, "re-registering the same pair is a no-op (idempotent)");
+} catch (e) {
+  must(false, `re-register should be idempotent, got: ${String(e.message).slice(0, 120)}`);
+}
+
+// The registry is enumerable — this is the entire point.
+const found = await conn.getProgramAccounts(PROGRAM, {
+  commitment: "confirmed",
+  filters: [{ dataSize: BACKPOINTER_LEN }],
+});
+must(found.some((f) => f.pubkey.equals(backpointer)),
+  `getProgramAccounts(dataSize=${BACKPOINTER_LEN}) finds this market (${found.length} total)`);
+
 console.log(failures === 0 ? "\nALL PASS\n" : `\n${failures} FAILED\n`);
 process.exit(failures ? 1 : 0);

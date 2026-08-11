@@ -118,9 +118,14 @@ pub fn create_mint(_program_id: &Address, accounts: &[AccountView]) -> ProgramRe
 ///   4 `[]`         token program
 pub fn wrap(_program_id: &Address, accounts: &[AccountView], amount: u64, bump: u8) -> ProgramResult {
     need(accounts, 5)?;
-    // Anything past the fixed five is TransferHook baggage for the mint being
-    // wrapped, forwarded untouched.
-    let hook_accounts = &accounts[5..];
+    // NO hook forwarding here, deliberately. On the way IN the caller moves the
+    // unwrapped tokens into escrow with their own transfer instruction, so the
+    // issuer's TransferHook fires on THAT instruction, against the caller's own
+    // account list — this program never CPIs the unwrapped mint during a wrap.
+    // It only mints shares, and the wrapped mint is ours. `unwrap` is different:
+    // there the escrow release IS our CPI, so it forwards trailing accounts (see
+    // `with_hook_accounts`). An earlier version bound `&accounts[5..]` here and
+    // never used it, which read as if wrap forwarded hooks too.
     let escrow = &accounts[0];
     let wrapped_mint = &accounts[1];
     let recipient = &accounts[2];
@@ -448,5 +453,142 @@ pub fn crank_fees(_program_id: &Address, accounts: &[AccountView], bump: u8) -> 
         },
         &[scratch, wrapped_mint, authority],
         &signer,
+    )
+}
+
+/// Register a wrapped mint in the on-chain registry.
+///
+/// Accounts:
+///   0 `[writable]` backpointer PDA — PRE-FUNDED by the caller with at least
+///                  rent-exempt lamports for `crate::backpointer::LEN`. Funding it
+///                  outside keeps System-rent maths out of this program, the
+///                  same trade `create_mint` makes for the mint itself.
+///   1 `[]`         wrapped mint
+///   2 `[]`         escrow (reserves) token account
+///   3 `[]`         unwrapped mint
+///   4 `[]`         unwrapped token program
+///   5 `[]`         wrapped token program
+///   6 `[]`         system program — REQUIRED. A CPI target must itself appear
+///                  in the transaction's account list; without it the runtime
+///                  reports "Unknown program 111…111" and the instruction fails
+///                  with MissingRequiredAccount before Allocate ever runs.
+///
+/// Data: `bump` (backpointer PDA bump).
+///
+/// PERMISSIONLESS AND IDEMPOTENT: anyone may register, and re-registering the
+/// same pair is a no-op rather than an error, so two clients racing to index a
+/// new market both succeed. Registering a DIFFERENT pair over an existing
+/// record is rejected — that would silently repoint a live market.
+///
+/// WHY THIS IS SAFE WITHOUT DERIVING THE AUTHORITY. Pinocchio deliberately
+/// ships no `find_program_address`/`create_program_address`, so the program
+/// cannot recompute the mint-authority PDA to check the escrow belongs to it.
+/// It does not need to: the wrapped mint's OWN `mint_authority` field is that
+/// PDA (set at creation, and `wrap` already rejects the mint outright if it is
+/// not — see MintAuthorityMismatch). Requiring `escrow.owner == wrapped_mint
+/// .mint_authority` binds the escrow to whatever can mint this share token,
+/// which is exactly the relationship the registry is asserting. The
+/// backpointer's own address is validated by the runtime when `invoke_signed`
+/// checks the seeds below, so a forged bump costs nothing to reject.
+pub fn init_backpointer(
+    program_id: &Address,
+    accounts: &mut [AccountView],
+    bump: u8,
+) -> ProgramResult {
+    need(accounts, 7)?;
+    // `try_borrow_mut` needs `&mut AccountView`, and indexing the slice twice
+    // would hand out a mutable and a shared borrow of the same slice. Splitting
+    // once gives the writable backpointer and the read-only rest, with the
+    // borrow checker satisfied and no clone.
+    let (backpointer, rest) = accounts
+        .split_first_mut()
+        .ok_or(ProgramError::from(WrapError::NotEnoughAccounts))?;
+    let wrapped_mint = &rest[0];
+    let escrow = &rest[1];
+    let unwrapped_mint = &rest[2];
+    let unwrapped_token_program = &rest[3];
+    let wrapped_token_program = &rest[4];
+
+    // ── bind the escrow to this wrapped mint ──────────────────────────────
+    let (esc_mint, esc_owner, _) = {
+        let d = escrow.try_borrow()?;
+        let m: [u8; 32] = d.get(0..32).and_then(|s| s.try_into().ok())
+            .ok_or(ProgramError::from(WrapError::NotEnoughAccounts))?;
+        let o: [u8; 32] = d.get(32..64).and_then(|s| s.try_into().ok())
+            .ok_or(ProgramError::from(WrapError::NotEnoughAccounts))?;
+        (Address::from(m), Address::from(o), ())
+    };
+    if esc_mint != *unwrapped_mint.address() {
+        return Err(WrapError::BackpointerEscrowMismatch.into());
+    }
+    // Mint layout: COption<Address> mint_authority = 4-byte tag + 32-byte body.
+    let (mint_authority, decimals) = {
+        let d = wrapped_mint.try_borrow()?;
+        let a: [u8; 32] = d.get(4..36).and_then(|s| s.try_into().ok())
+            .ok_or(ProgramError::from(WrapError::NotEnoughAccounts))?;
+        let dec = *d.get(crate::state::MINT_DECIMALS_OFFSET)
+            .ok_or(ProgramError::from(WrapError::NotEnoughAccounts))?;
+        (Address::from(a), dec)
+    };
+    if esc_owner != mint_authority {
+        return Err(WrapError::BackpointerEscrowMismatch.into());
+    }
+
+    // ── idempotence: already registered? ──────────────────────────────────
+    if unsafe { backpointer.owner() } == program_id {
+        let d = backpointer.try_borrow()?;
+        if crate::backpointer::is_initialised(&d) {
+            return if crate::backpointer::matches(&d, unwrapped_mint.address(), escrow.address()) {
+                Ok(())
+            } else {
+                Err(WrapError::BackpointerConflict.into())
+            };
+        }
+    }
+
+    // ── allocate + assign, signed by the backpointer PDA ──────────────────
+    // Allocate(space) then Assign(owner) rather than CreateAccount, so the
+    // program never needs the rent sysvar or a lamport figure: the caller
+    // pre-funds the address and these two only change size and ownership.
+    let bump_arr = [bump];
+    let seeds = [
+        Seed::from(crate::backpointer::BACKPOINTER_SEED),
+        Seed::from(wrapped_mint.address().as_ref()),
+        Seed::from(&bump_arr[..]),
+    ];
+    let signer = [Signer::from(&seeds[..])];
+    let system = Address::from([0u8; 32]);
+
+    if unsafe { backpointer.owner() } != program_id {
+        let mut alloc = [0u8; 12];
+        alloc[0] = 8; // System::Allocate
+        alloc[4..12].copy_from_slice(&(crate::backpointer::LEN as u64).to_le_bytes());
+        let metas = [InstructionAccount::writable_signer(backpointer.address())];
+        invoke_signed(
+            &InstructionView { program_id: &system, accounts: &metas, data: &alloc },
+            &[&*backpointer],
+            &signer,
+        )?;
+
+        let mut assign = [0u8; 36];
+        assign[0] = 1; // System::Assign
+        assign[4..36].copy_from_slice(program_id.as_ref());
+        let metas = [InstructionAccount::writable_signer(backpointer.address())];
+        invoke_signed(
+            &InstructionView { program_id: &system, accounts: &metas, data: &assign },
+            &[&*backpointer],
+            &signer,
+        )?;
+    }
+
+    let mut d = backpointer.try_borrow_mut()?;
+    crate::backpointer::write(
+        &mut d,
+        unwrapped_mint.address(),
+        escrow.address(),
+        unwrapped_token_program.address(),
+        wrapped_token_program.address(),
+        0, // authority bump is not derivable here; clients read mint_authority
+        decimals,
     )
 }

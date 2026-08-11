@@ -27,6 +27,7 @@
 
 #![no_std]
 
+pub mod backpointer;
 pub mod error;
 pub mod nav;
 pub mod processor;
@@ -63,6 +64,8 @@ pub enum Instruction {
     Unwrap = 2,
     /// Harvest withheld transfer fees, split 50/50 burn/treasury.
     CrankFees = 3,
+    /// Register wrapped→unwrapped in the on-chain registry (backpointer PDA).
+    InitBackpointer = 4,
 }
 
 impl TryFrom<u8> for Instruction {
@@ -73,6 +76,7 @@ impl TryFrom<u8> for Instruction {
             1 => Ok(Self::Wrap),
             2 => Ok(Self::Unwrap),
             3 => Ok(Self::CrankFees),
+            4 => Ok(Self::InitBackpointer),
             _ => Err(error::WrapError::InvalidInstruction.into()),
         }
     }
@@ -96,6 +100,12 @@ pub fn process_instruction(
             processor::unwrap(program_id, accounts, read_u64(rest)?, read_bump(rest)?)
         }
         Instruction::CrankFees => processor::crank_fees(program_id, accounts, read_bump_at(rest, 0)?),
+        Instruction::InitBackpointer => {
+            {
+                let b = read_bump_at(rest, 0)?;
+                processor::init_backpointer(program_id, accounts, b)
+            }
+        }
     }
 }
 
