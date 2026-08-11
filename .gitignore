@@ -1,0 +1,15 @@
+# Build output — also where `solana program deploy` writes PROGRAM KEYPAIRS.
+# Publishing target/deploy/*-keypair.json would leak the program's identity
+# keypair, so this exclusion is load-bearing, not tidiness.
+/target
+**/target
+
+# Local validator ledgers / test artifacts
+test-ledger/
+*.so
+
+# Never
+*keypair*.json
+*.key
+.env
+.env.*

@@ -1,0 +1,16 @@
+[package]
+name = "wrap-nav-pinocchio"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[features]
+default = []
+test-sbf = []
+
+[dependencies]
+pinocchio = { version = "0.11", features = ["cpi"] }
+
+[dev-dependencies]
