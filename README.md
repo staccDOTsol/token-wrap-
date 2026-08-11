@@ -4,6 +4,41 @@
 > repo names, so the plusses collapsed and left a lonely trailing dash. It is
 > `token-wrap-` forever now. Read it as `token-wrap++`.
 
+## Why this exists
+
+On 9 July 2026 I asked, publicly:
+
+> *"can you bls get a wrapped spl-only variant for your coins? i set up
+> FluxBeam pools for your heavily laden t22 tokens and alas even tho they
+> existed arbs didn't flow. Please, for the good of the eco — make a canonical
+> token wrap implementation (someone)."*
+
+Nobody did. This is it.
+
+**The problem is routing, not liquidity.** A Token-2022 mint carrying
+extensions — transfer fees, hooks, confidential transfer — is something most
+AMMs, aggregators and market makers simply will not touch. Not because the
+token is bad, but because every extension is another edge case in their
+execution path, and the expected volume never justifies the integration. So
+you can stand up pools for a heavily-extended token, fund both sides, and
+watch arbs decline to show up. The pools exist. The flow doesn't.
+
+Wrapping to a plain SPL variant fixes that: routers handle it because there is
+nothing special to handle. That is what upstream
+[`solana-program/token-wrap`](https://github.com/solana-program/token-wrap)
+does, and it is genuinely the right primitive.
+
+**This fork adds the half that was missing.** Upstream's wrapper is a 1:1
+receipt, so the wrapped token is inert — it routes, and that is all it does.
+Here the wrapper is a *share*, so the same act of making a token routable also
+makes it earn. Reserves and supply move independently, and Token-2022's own
+`TransferFee` extension funds the growth.
+
+The uncomfortable observation behind the original tweet still stands: compliance
+tokens promised an ecosystem and shipped an integration burden. A canonical
+wrap is the cheapest way to make that burden somebody else's problem — once —
+instead of every venue's problem, forever.
+
 ## TL;DR
 
 Upstream `token-wrap` gives you a **receipt**: put in 100, get 100, always 1:1.
@@ -109,6 +144,28 @@ point: `ConfidentialTransfer` makes the reserve/supply ratio unauditable by
 holders, `TransferHook` lets a third party freeze a payment rail, and
 `InterestBearing` rebases the displayed amount and double-counts against NAV.
 No freeze authority, ever.
+
+## Wrapping OUT of extensions
+
+The direction that motivated this is the boring one, and it works because
+SPL-Token has no extension concept at all:
+
+```
+T22 mint (fees, hooks, confidential)  ->  plain SPL wrapped mint
+```
+
+Everything the router could not handle is left behind in the escrow. The
+wrapped side is an ordinary SPL token that any AMM, aggregator or market maker
+routes without a special case.
+
+`process_wrap` nets out a source-side `TransferFee` **before** pricing the
+deposit, so an underlying that taxes its own transfers cannot silently
+under-fund the escrow — the reserve accounting stays exact even when the thing
+being wrapped is hostile to accounting.
+
+Going the other way (`SPL -> T22`) is where the yield lives: the wrapped mint
+carries `TransferFeeConfig`, and that fee is what drives NAV. Pick the
+direction that matches the job.
 
 ## Instruction encoding
 
