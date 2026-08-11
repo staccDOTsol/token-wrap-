@@ -1,5 +1,9 @@
 # token-wrap — yield-bearing fork
 
+> **On the name:** this was meant to be `token-wrap++`. GitHub strips `+` from
+> repo names, so the plusses collapsed and left a lonely trailing dash. It is
+> `token-wrap-` forever now. Read it as `token-wrap++`.
+
 ## TL;DR
 
 Upstream `token-wrap` gives you a **receipt**: put in 100, get 100, always 1:1.
