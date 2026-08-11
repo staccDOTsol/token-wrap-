@@ -1,0 +1,2 @@
+{ "name": "wrap-nav-e2e", "type": "module", "private": true,
+  "dependencies": { "@solana/web3.js": "^1.95.0", "@solana/spl-token": "^0.4.9" } }

@@ -1,5 +1,38 @@
 # token-wrap — yield-bearing fork
 
+## TL;DR
+
+Upstream `token-wrap` gives you a **receipt**: put in 100, get 100, always 1:1.
+
+This gives you a **share**. Reserves and supply move independently, so when the
+pool grows without new shares being minted, every existing share is worth more.
+
+```
+wrap:    shares = assets × supply / reserves
+unwrap:  assets = shares × reserves / supply
+```
+
+Where the growth comes from: Token-2022's `TransferFee` extension takes a cut
+of every transfer of the wrapped token. A permissionless crank sweeps those
+fees and burns half — supply falls, reserves don't move, everyone's share goes
+up. The other half goes to a treasury.
+
+**It is not a ponzi, and the difference is structural, not rhetorical.** The
+yield is paid by *transfer volume*, not by new deposits. A depositor's money
+goes into the escrow and stays claimable by them at all times — nobody's
+deposit funds anyone else's return. If volume stops, NAV simply stops rising;
+it never needs a next buyer to hold up, and there is nothing to unwind. Wrap
+and unwrap are symmetric at the same price, so being early confers no
+advantage over being late.
+
+What you actually get for holding it: an idle balance that earns instead of
+sitting still, on a token that stays spendable the whole time.
+
+Also **28× smaller** than the upstream build — 15,936 vs 443,712 bytes, which
+is 0.22 vs 6.18 SOL of rent locked forever.
+
+---
+
 A fork of [`solana-program/token-wrap`](https://github.com/solana-program/token-wrap)
 where the wrapped token is a **share in a pool** rather than a 1:1 receipt.
 
@@ -80,7 +113,9 @@ No IDL, no Borsh — a single-byte discriminant.
 ```
 0  CreateMint
 1  Wrap        [u8 tag][u64 amount LE][u8 bump]
-2  Unwrap      [u8 tag][u64 shares LE][u8 bump]
+2  Unwrap      [u8 tag][u64 shares LE][u8 bump]     (8 accounts — the HOLDER
+                                                    signs the burn, the PDA
+                                                    signs the escrow release)
 3  CrankFees   [u8 tag][u8 bump]
 ```
 
@@ -89,9 +124,18 @@ No IDL, no Borsh — a single-byte discriminant.
 Deployed to Solana mainnet and devnet at
 `FrSERTNCPvTtaDS9AvQp9u1nYGzXDb3kC9MdL8Xxn2NE` (upgradeable).
 
-**13 host tests pass. There are zero integration tests.** No CPI path has ever
-executed against a validator — the NAV arithmetic is well covered, the account
-wiring is not. Treat it accordingly.
+**13 host tests pass, and `e2e/e2e.mjs` runs end-to-end against a real
+validator** — wrap, donate, unwrap, asserting NAV moved. Green on devnet and
+mainnet.
+
+That test earned its keep immediately: `unwrap` burned from the holder's token
+account while signing with the program's PDA, and a token account can only be
+debited by its **owner**. Every unwrap would have failed. The host tests all
+passed against that build, because the arithmetic is identical either way and
+only a validator enforces account ownership.
+
+The crank's harvest path is wired but has **not** been exercised end-to-end —
+no test has yet collected withheld fees and watched NAV rise from them.
 
 Unaudited.
 
