@@ -1,0 +1,142 @@
+[
+  {
+    "x402Version": 1,
+    "scheme": "exact",
+    "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+    "extra": {
+      "asset": "6ZjjxcoicqM4nniddkuPVwew4PDwY3swbfHsGbCuLuTv",
+      "symbol": "yUSDCx",
+      "decimals": 6,
+      "yieldBearing": true,
+      "acquire": {
+        "method": "spl-token-wrap",
+        "program": "FrSERTNCPvTtaDS9AvQp9u1nYGzXDb3kC9MdL8Xxn2NE",
+        "underlying": {
+          "address": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+          "symbol": "USDC",
+          "decimals": 6,
+          "tokenProgram": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        "escrow": "2qLm8aCvn6gQVUFeQ7EC5J62Y95gFzc3vReHzD5d5Gj2",
+        "mintAuthority": "EBGYMEEEPKu7szPUbnbp2h63azY9Sj9GR4MA2Ms6Quoi",
+        "authorityBump": 253,
+        "steps": [
+          {
+            "program": "FrSERTNCPvTtaDS9AvQp9u1nYGzXDb3kC9MdL8Xxn2NE",
+            "instruction": "Wrap",
+            "note": "tag 1, u64 amount LE, bump 253. NINE accounts: escrow, wrapped mint, recipient ATA, mint authority PDA, wrapped token program, depositor unwrapped ATA, depositor signer, unwrapped mint, unwrapped token program. The program pulls the deposit itself (TransferChecked) before minting; a call without the deposit accounts is rejected NotEnoughAccounts (0x6a). Account 4 is Token-2022 (yUSDCx mint owner); account 8 is Tokenkeg (USDC / escrow owner) — not interchangeable."
+          }
+        ],
+        "helpUrl": "https://x402.accrue.fund/start",
+        "source": "https://github.com/staccDOTsol/token-wrap-"
+      },
+      "feePayer": "WzMaL78srutrF6CsxEkWuhMaDF5HZA6jNRaEPengqpb"
+    }
+  },
+  {
+    "x402Version": 1,
+    "scheme": "exact",
+    "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+    "extra": {
+      "asset": "FXYkwMtfKpA174rp8ixVeiGs5TYGaBsYRrHE3KrR449B",
+      "symbol": "wTOKENx2",
+      "decimals": 6,
+      "yieldBearing": true,
+      "acquire": {
+        "method": "spl-token-wrap",
+        "program": "FrSERTNCPvTtaDS9AvQp9u1nYGzXDb3kC9MdL8Xxn2NE",
+        "underlying": {
+          "address": "EVULoNF4DeMBN4dGiZiDfpiiTfNZgoCvXWWgaV3epump",
+          "symbol": "TOKEN",
+          "decimals": 6,
+          "tokenProgram": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        "escrow": "2ZFYUDiYbtJ8czCPnd6Wjbeo1Yg1LLJ9JkGPMeuZkKyh",
+        "mintAuthority": "2SFdjJoRyWfXvXghAjahDgmaZPrAr5WqqCr8KquAtZVM",
+        "authorityBump": 254,
+        "steps": [
+          {
+            "program": "FrSERTNCPvTtaDS9AvQp9u1nYGzXDb3kC9MdL8Xxn2NE",
+            "instruction": "Wrap",
+            "note": "tag 1, u64 amount LE, bump 254. NINE accounts: escrow, wrapped mint, recipient ATA, mint authority PDA, wrapped token program, depositor unwrapped ATA, depositor signer, unwrapped mint, unwrapped token program. The program pulls the deposit itself (TransferChecked) before minting; a call without the deposit accounts is rejected NotEnoughAccounts (0x6a)."
+          }
+        ],
+        "helpUrl": "https://x402.accrue.fund/start",
+        "source": "https://github.com/staccDOTsol/token-wrap-",
+        "pump": "https://pump.fun/coin/EVULoNF4DeMBN4dGiZiDfpiiTfNZgoCvXWWgaV3epump",
+        "warning": "Replaces Bo7xBF7SY8EyUBPUxRP66SFafxoPf2n5uqiLjbxEebx9, drained 2026-08-18 (829,559 TOKEN) by Wrap instructions that minted shares with no deposit. Program fixed at slot 440219442."
+      },
+      "feePayer": "WzMaL78srutrF6CsxEkWuhMaDF5HZA6jNRaEPengqpb"
+    }
+  },
+  {
+    "x402Version": 1,
+    "scheme": "exact",
+    "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+    "extra": {
+      "asset": "3FViQRMqtG6dUDFxZyyVvpM9xTHsKdX7uqZ5jvL8NZ35",
+      "symbol": "wLEOSx",
+      "decimals": 9,
+      "yieldBearing": true,
+      "acquire": {
+        "method": "spl-token-wrap",
+        "program": "FrSERTNCPvTtaDS9AvQp9u1nYGzXDb3kC9MdL8Xxn2NE",
+        "underlying": {
+          "address": "5xgsnby6P9zqGK71J7H4yJLxzqPvNbC7rDZxNzjHmj7e",
+          "symbol": "LEOS",
+          "decimals": 9,
+          "tokenProgram": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        "escrow": "62kjFPGb2RnPXfShFdeYuvyN72hg5EC4N8UVkuN1RiMc",
+        "mintAuthority": "3Fj3FCty8DJZTrEdW5dYLgEfbVNATDixj9gVWWxuvz8J",
+        "authorityBump": 255,
+        "steps": [
+          {
+            "program": "FrSERTNCPvTtaDS9AvQp9u1nYGzXDb3kC9MdL8Xxn2NE",
+            "instruction": "Wrap",
+            "note": "tag 1, u64 amount LE, bump 255. NINE accounts: escrow, wrapped mint, recipient ATA, mint authority PDA, wrapped token program, depositor unwrapped ATA, depositor signer, unwrapped mint, unwrapped token program. The program pulls the deposit itself (TransferChecked) before minting; a call without the deposit accounts is rejected NotEnoughAccounts (0x6a). Account 4 is Token-2022 (wLEOSx mint owner); account 8 is Tokenkeg (LEOS / escrow owner) — not interchangeable."
+          }
+        ],
+        "helpUrl": "https://x402.accrue.fund/start",
+        "source": "https://github.com/staccDOTsol/token-wrap-"
+      },
+      "feePayer": "WzMaL78srutrF6CsxEkWuhMaDF5HZA6jNRaEPengqpb"
+    }
+  },
+  {
+    "x402Version": 1,
+    "scheme": "exact",
+    "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+    "extra": {
+      "asset": "9rnfPL9hJS8UNjcSjkuncosjcVF37byRfK26p9fStfLt",
+      "symbol": "fSPCX",
+      "decimals": 6,
+      "yieldBearing": true,
+      "acquire": {
+        "method": "spl-token-wrap",
+        "program": "FrSERTNCPvTtaDS9AvQp9u1nYGzXDb3kC9MdL8Xxn2NE",
+        "underlying": {
+          "address": "SPCXxcqXj6e5dJDVNovHN8744zkbhM2bYudU45BimGb",
+          "symbol": "SPCX",
+          "decimals": 6,
+          "tokenProgram": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        "escrow": "6PEq3Phc6R3ok94Nc7YhyAHh8Nxz9a1t4Wyf3k6gsR5M",
+        "mintAuthority": "EKX9M7hLB7doqGPPyReBAYUgmiQs5FviNHK9s6KqboZu",
+        "authorityBump": 255,
+        "backpointer": "CSZt4rLw8HgJjZLpYkRW2BkJp2WyuwKBa8ndWn7MQS5J",
+        "steps": [
+          {
+            "program": "FrSERTNCPvTtaDS9AvQp9u1nYGzXDb3kC9MdL8Xxn2NE",
+            "instruction": "Wrap",
+            "note": "tag 1, u64 amount LE, bump 255. NINE accounts: escrow, wrapped mint, recipient ATA, mint authority PDA, wrapped token program, depositor unwrapped ATA, depositor signer, unwrapped mint, unwrapped token program. The program pulls the deposit itself (TransferChecked) before minting; a call without the deposit accounts is rejected NotEnoughAccounts (0x6a)."
+          }
+        ],
+        "helpUrl": "https://fragged.app/fragment/9rnfPL9hJS8UNjcSjkuncosjcVF37byRfK26p9fStfLt",
+        "source": "https://github.com/staccDOTsol/token-wrap-",
+        "warning": "Supply is 0 — no genesis wrap yet. NAV is undefined and there is no liquidity until the first wrap."
+      },
+      "feePayer": "WzMaL78srutrF6CsxEkWuhMaDF5HZA6jNRaEPengqpb"
+    }
+  }
+]

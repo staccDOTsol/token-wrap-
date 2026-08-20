@@ -33,6 +33,7 @@ import {
   createMintToInstruction, createTransferCheckedInstruction,
 } from "@solana/spl-token";
 import { readFileSync } from "node:fs";
+import { buildWrapInstruction } from "./wrap.mjs";
 
 const NET = process.argv[2] ?? "devnet";
 const URL = NET === "mainnet"
@@ -139,20 +140,21 @@ await send(new Transaction().add(
 console.log(`  escrow          ${escrow.toBase58()}`);
 console.log(`  scratch         ${scratch.toBase58()}\n`);
 
-// ── 4. deposit + wrap ────────────────────────────────────────────────────
+// ── 4. wrap only — program pulls the deposit (9 accounts) ────────────────
 const treasuryWrapped = getAssociatedTokenAddressSync(wrapped.publicKey, payer.publicKey, false, TOKEN_2022_PROGRAM_ID);
 await send(new Transaction().add(
-  createTransferCheckedInstruction(userUnderlying, underlying.publicKey, escrow, payer.publicKey, DEPOSIT, 6, [], TOKEN_2022_PROGRAM_ID),
-  new TransactionInstruction({
-    programId: PROGRAM,
-    keys: [
-      { pubkey: escrow, isSigner: false, isWritable: true },
-      { pubkey: wrapped.publicKey, isSigner: false, isWritable: true },
-      { pubkey: treasuryWrapped, isSigner: false, isWritable: true },
-      { pubkey: authority, isSigner: false, isWritable: false },
-      { pubkey: TOKEN_2022_PROGRAM_ID, isSigner: false, isWritable: false },
-    ],
-    data: Buffer.concat([Buffer.from([1]), u64le(DEPOSIT), Buffer.from([bump])]),
+  buildWrapInstruction({
+    escrow,
+    wrappedMint: wrapped.publicKey,
+    recipientWrappedAta: treasuryWrapped,
+    authority,
+    wrappedTokenProgram: TOKEN_2022_PROGRAM_ID,
+    depositorUnderlyingAta: userUnderlying,
+    depositor: payer.publicKey,
+    unwrappedMint: underlying.publicKey,
+    unwrappedTokenProgram: TOKEN_2022_PROGRAM_ID,
+    amount: DEPOSIT,
+    bump,
   }),
 ), [payer]);
 

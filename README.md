@@ -173,12 +173,21 @@ No IDL, no Borsh — a single-byte discriminant.
 
 ```
 0  CreateMint
-1  Wrap        [u8 tag][u64 amount LE][u8 bump]
-2  Unwrap      [u8 tag][u64 shares LE][u8 bump]     (8 accounts — the HOLDER
-                                                    signs the burn, the PDA
-                                                    signs the escrow release)
+1  Wrap        [u8 tag][u64 amount LE][u8 bump]     (9 accounts — the program
+                                                    CPIs TransferChecked, then
+                                                    mints. No separate deposit.)
+2  Unwrap      [u8 tag][u64 shares LE][u8 bump]     (9 accounts — account 8 is
+                                                    the unwrapped token program;
+                                                    the HOLDER signs the burn,
+                                                    the PDA signs the release)
 3  CrankFees   [u8 tag][u8 bump]
 ```
+
+Client wrap copy for `GET https://x402.accrue.fund/supported` lives in
+`supported/solana-spl-token-wrap.json`. Every `spl-token-wrap` row is a single
+9-account Wrap. Merging this repo does **not** publish that file to the
+facilitator — copy those `acquire.steps` into the worker that serves
+`/supported` and redeploy it.
 
 ## Status
 

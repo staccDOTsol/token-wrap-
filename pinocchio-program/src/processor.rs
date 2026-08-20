@@ -111,33 +111,84 @@ pub fn create_mint(_program_id: &Address, accounts: &[AccountView]) -> ProgramRe
 /// Deposit unwrapped tokens, mint shares at NAV.
 ///
 /// Accounts:
-///   0 `[writable]` unwrapped escrow (reserves)
+///   0 `[writable]` unwrapped escrow (reserves) — authority PDA ATA
 ///   1 `[writable]` wrapped mint (supply)
 ///   2 `[writable]` recipient wrapped token account
-///   3 `[]`         wrapped mint authority PDA
-///   4 `[]`         token program
+///   3 `[]`         wrapped mint authority PDA `["mint_authority", wrapped_mint]`
+///   4 `[]`         wrapped token program (= `wrapped_mint.owner`)
+///   5 `[writable]` depositor UNDERLYING token account
+///   6 `[signer]`   depositor
+///   7 `[]`         unwrapped mint
+///   8 `[]`         unwrapped token program (= `escrow.owner`)
+///   9+             optional TransferHook extras, forwarded on the deposit CPI
+///
+/// Account 4 and account 8 are not interchangeable. wLEOSx shares are
+/// Token-2022 while the LEOS escrow is Tokenkeg; a client that copies the
+/// wrapped program into both slots fails the deposit CPI.
+///
+/// The program CPIs `TransferChecked` itself, then mints. A 5-account call
+/// (the pre-slot-440219442 shape that trusted a separate client transfer)
+/// is rejected `NotEnoughAccounts` (0x6a).
 pub fn wrap(_program_id: &Address, accounts: &[AccountView], amount: u64, bump: u8) -> ProgramResult {
-    need(accounts, 5)?;
-    // NO hook forwarding here, deliberately. On the way IN the caller moves the
-    // unwrapped tokens into escrow with their own transfer instruction, so the
-    // issuer's TransferHook fires on THAT instruction, against the caller's own
-    // account list — this program never CPIs the unwrapped mint during a wrap.
-    // It only mints shares, and the wrapped mint is ours. `unwrap` is different:
-    // there the escrow release IS our CPI, so it forwards trailing accounts (see
-    // `with_hook_accounts`). An earlier version bound `&accounts[5..]` here and
-    // never used it, which read as if wrap forwarded hooks too.
+    need(accounts, 9)?;
+    let hook_accounts = &accounts[9..];
     let escrow = &accounts[0];
     let wrapped_mint = &accounts[1];
     let recipient = &accounts[2];
     let authority = &accounts[3];
-    let token_program = &accounts[4];
+    let wrapped_token_program = &accounts[4];
+    let depositor_ata = &accounts[5];
+    let depositor = &accounts[6];
+    let unwrapped_mint = &accounts[7];
+    let unwrapped_token_program = &accounts[8];
 
     // BEFORE the deposit lands. Pricing against post-transfer reserves values
     // the depositor's own money as already pooled and mints them too few.
     let reserves_before = token_account_amount(escrow)?;
     let supply_before = mint_supply(wrapped_mint)?;
 
-    let shares = nav::shares_for_assets(amount, reserves_before, supply_before)?;
+    // Pull the underlying in. A caller who only mint-shares (the 2026-08-18
+    // drain) cannot: the deposit accounts are required and the transfer is
+    // ours. Trailing hook accounts ride along so a hook-gated underlying
+    // can still be wrapped.
+    let decimals = mint_decimals(unwrapped_mint)?;
+    let mut tdata = [0u8; 10];
+    tdata[0] = tix::TRANSFER_CHECKED;
+    tdata[1..9].copy_from_slice(&amount.to_le_bytes());
+    tdata[9] = decimals;
+    let tfixed = [
+        InstructionAccount::writable(depositor_ata.address()),
+        InstructionAccount::readonly(unwrapped_mint.address()),
+        InstructionAccount::writable(escrow.address()),
+        InstructionAccount::readonly_signer(depositor.address()),
+    ];
+    let mut tbuf: [InstructionAccount; MAX_HOOK_ACCOUNTS + 4] =
+        core::array::from_fn(|_| InstructionAccount::readonly(escrow.address()));
+    let tn = with_hook_accounts(&tfixed, hook_accounts, &mut tbuf);
+    let mut tviews: [&AccountView; MAX_HOOK_ACCOUNTS + 4] =
+        core::array::from_fn(|_| escrow);
+    tviews[0] = depositor_ata;
+    tviews[1] = unwrapped_mint;
+    tviews[2] = escrow;
+    tviews[3] = depositor;
+    for (i, h) in hook_accounts.iter().take(MAX_HOOK_ACCOUNTS).enumerate() {
+        tviews[4 + i] = h;
+    }
+    pinocchio::cpi::invoke_signed_with_bounds::<{ MAX_HOOK_ACCOUNTS + 4 }, _>(
+        &InstructionView {
+            program_id: unwrapped_token_program.address(),
+            accounts: &tbuf[..tn],
+            data: &tdata,
+        },
+        &tviews[..tn],
+        &[],
+    )?;
+
+    // Price what actually landed. A source-side TransferFee would otherwise
+    // mint shares against an amount the escrow never received.
+    let reserves_after = token_account_amount(escrow)?;
+    let net = reserves_after.saturating_sub(reserves_before);
+    let shares = nav::shares_for_assets(net, reserves_before, supply_before)?;
     if shares == 0 {
         // Would be a silent donation to existing holders. Refuse.
         return Err(WrapError::DepositTooSmall.into());
@@ -153,7 +204,7 @@ pub fn wrap(_program_id: &Address, accounts: &[AccountView], amount: u64, bump: 
         InstructionAccount::readonly_signer(authority.address()),
     ];
     let ix = InstructionView {
-        program_id: token_program.address(),
+        program_id: wrapped_token_program.address(),
         accounts: &metas,
         data: &data,
     };
@@ -181,7 +232,9 @@ pub fn wrap(_program_id: &Address, accounts: &[AccountView], amount: u64, bump: 
 ///   4 `[writable]` recipient unwrapped token account
 ///   5 `[]`         wrapped mint authority PDA
 ///   6 `[]`         unwrapped mint
-///   7 `[]`         token program
+///   7 `[]`         wrapped token program (= `wrapped_mint.owner`)
+///   8 `[]`         unwrapped token program (= `escrow.owner`)
+///   9+             optional TransferHook extras, forwarded on the escrow CPI
 ///
 /// TWO DIFFERENT SIGNERS, AND THEY ARE NOT INTERCHANGEABLE.
 ///
@@ -199,8 +252,8 @@ pub fn unwrap(
     shares: u64,
     bump: u8,
 ) -> ProgramResult {
-    need(accounts, 8)?;
-    let hook_accounts = &accounts[8..];
+    need(accounts, 9)?;
+    let hook_accounts = &accounts[9..];
     let escrow = &accounts[0];
     let wrapped_mint = &accounts[1];
     let holder = &accounts[2];
@@ -208,7 +261,8 @@ pub fn unwrap(
     let recipient = &accounts[4];
     let authority = &accounts[5];
     let unwrapped_mint = &accounts[6];
-    let token_program = &accounts[7];
+    let wrapped_token_program = &accounts[7];
+    let unwrapped_token_program = &accounts[8];
 
     // BEFORE the burn. Burning first shrinks supply and inflates this
     // redeemer's own payout — the mirror of the wrap ordering bug.
@@ -243,7 +297,7 @@ pub fn unwrap(
     // transaction, so no PDA seeds are involved in the burn at all.
     pinocchio::cpi::invoke(
         &InstructionView {
-            program_id: token_program.address(),
+            program_id: wrapped_token_program.address(),
             accounts: &bmetas,
             data: &bdata,
         },
@@ -279,7 +333,7 @@ pub fn unwrap(
 
     pinocchio::cpi::invoke_signed_with_bounds::<{ MAX_HOOK_ACCOUNTS + 4 }, _>(
         &InstructionView {
-            program_id: token_program.address(),
+            program_id: unwrapped_token_program.address(),
             accounts: &tbuf[..tn],
             data: &tdata,
         },

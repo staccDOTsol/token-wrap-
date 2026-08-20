@@ -20,6 +20,7 @@ import {
   createMintToInstruction, getAccount, getMint, ExtensionType,
 } from "@solana/spl-token";
 import { readFileSync } from "node:fs";
+import { buildWrapInstruction, buildUnwrapInstruction } from "./wrap.mjs";
 
 const NET = process.argv[2] ?? "devnet";
 const URL = NET === "mainnet"
@@ -36,18 +37,6 @@ const conn = new Connection(URL, "confirmed");
 const ok = (c, m) => console.log(`${c ? "  ok  " : "  FAIL"} ${m}`);
 let failures = 0;
 const must = (c, m) => { ok(c, m); if (!c) failures++; };
-
-// Instruction encoding — matches processor.rs exactly. Any drift here is the
-// bug this test exists to catch.
-const ixWrap = (accounts, amount, bump) => new TransactionInstruction({
-  programId: PROGRAM, keys: accounts,
-  data: Buffer.concat([Buffer.from([1]), u64le(amount), Buffer.from([bump])]),
-});
-const ixUnwrap = (accounts, shares, bump) => new TransactionInstruction({
-  programId: PROGRAM, keys: accounts,
-  data: Buffer.concat([Buffer.from([2]), u64le(shares), Buffer.from([bump])]),
-});
-function u64le(n) { const b = Buffer.alloc(8); b.writeBigUInt64LE(BigInt(n)); return b; }
 
 console.log(`\nwrap-nav e2e · ${NET} · ${PROGRAM.toBase58()}`);
 console.log(`payer ${payer.publicKey.toBase58()}\n`);
@@ -95,20 +84,23 @@ tx = new Transaction().add(
 await sendAndConfirmTransaction(conn, tx, [payer]);
 console.log(`  escrow          ${escrow.toBase58()}\n`);
 
-// ── 4. Seed the escrow, then wrap. The program reads reserves from the escrow
-// balance, so the deposit transfer is the caller's job in the same tx.
+// ── 4. Wrap only. The program CPIs TransferChecked itself (9 accounts).
 const DEPOSIT = 100_000;
 const { createTransferCheckedInstruction } = await import("@solana/spl-token");
-const wrapAccounts = [
-  { pubkey: escrow, isSigner: false, isWritable: true },
-  { pubkey: wrapped.publicKey, isSigner: false, isWritable: true },
-  { pubkey: userWrapped, isSigner: false, isWritable: true },
-  { pubkey: authority, isSigner: false, isWritable: false },
-  { pubkey: TOKEN_2022_PROGRAM_ID, isSigner: false, isWritable: false },
-];
 tx = new Transaction().add(
-  createTransferCheckedInstruction(userUnderlying, underlying.publicKey, escrow, payer.publicKey, DEPOSIT, 6, [], TOKEN_2022_PROGRAM_ID),
-  ixWrap(wrapAccounts, DEPOSIT, bump),
+  buildWrapInstruction({
+    escrow,
+    wrappedMint: wrapped.publicKey,
+    recipientWrappedAta: userWrapped,
+    authority,
+    wrappedTokenProgram: TOKEN_2022_PROGRAM_ID,
+    depositorUnderlyingAta: userUnderlying,
+    depositor: payer.publicKey,
+    unwrappedMint: underlying.publicKey,
+    unwrappedTokenProgram: TOKEN_2022_PROGRAM_ID,
+    amount: DEPOSIT,
+    bump,
+  }),
 );
 try {
   const sig = await sendAndConfirmTransaction(conn, tx, [payer]);
@@ -140,21 +132,22 @@ console.log(`\n  donated ${DONATE} to escrow — reserves now ${reserves2}, supp
 
 // ── 6. Unwrap half. Must return MORE than face value, because NAV rose.
 const REDEEM = Math.floor(shares / 2);
-const unwrapAccounts = [
-  { pubkey: escrow, isSigner: false, isWritable: true },
-  { pubkey: wrapped.publicKey, isSigner: false, isWritable: true },
-  { pubkey: userWrapped, isSigner: false, isWritable: true },
-  // The HOLDER signs the burn — a token account can only be debited by its
-  // owner. The PDA below signs only the escrow release.
-  { pubkey: payer.publicKey, isSigner: true, isWritable: false },
-  { pubkey: userUnderlying, isSigner: false, isWritable: true },
-  { pubkey: authority, isSigner: false, isWritable: false },
-  { pubkey: underlying.publicKey, isSigner: false, isWritable: false },
-  { pubkey: TOKEN_2022_PROGRAM_ID, isSigner: false, isWritable: false },
-];
+const unwrapIx = buildUnwrapInstruction({
+  escrow,
+  wrappedMint: wrapped.publicKey,
+  holderWrappedAta: userWrapped,
+  holder: payer.publicKey,
+  recipientUnwrappedAta: userUnderlying,
+  authority,
+  unwrappedMint: underlying.publicKey,
+  wrappedTokenProgram: TOKEN_2022_PROGRAM_ID,
+  unwrappedTokenProgram: TOKEN_2022_PROGRAM_ID,
+  shares: REDEEM,
+  bump,
+});
 const beforeUnderlying = Number((await getAccount(conn, userUnderlying, "confirmed", TOKEN_2022_PROGRAM_ID)).amount);
 try {
-  const sig = await sendAndConfirmTransaction(conn, new Transaction().add(ixUnwrap(unwrapAccounts, REDEEM, bump)), [payer]);
+  const sig = await sendAndConfirmTransaction(conn, new Transaction().add(unwrapIx), [payer]);
   console.log(`  unwrap tx ${sig.slice(0, 24)}…`);
 } catch (e) {
   console.log(`  unwrap FAILED: ${String(e.message).slice(0, 300)}`);
